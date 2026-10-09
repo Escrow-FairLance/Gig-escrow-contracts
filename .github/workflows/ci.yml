@@ -19,7 +19,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32v1-none, wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -36,16 +36,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32v1-none, wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Stellar CLI
-        run: cargo install --locked stellar-cli --features opt
-
       - name: Build Contract WASM
-        run: stellar contract build
+        run: cargo build --target wasm32-unknown-unknown --release
 
   bindings-and-types:
     name: Verify TypeScript Bindings
