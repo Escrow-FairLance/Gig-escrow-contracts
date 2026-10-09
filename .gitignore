@@ -1,0 +1,7 @@
+/target
+.env
+.stellar
+dist/
+node_modules/
+test_snapshots/
+bindings/node_modules/
