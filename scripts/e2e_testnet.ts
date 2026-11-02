@@ -29,17 +29,25 @@ async function main() {
   }
   const config: DeployedContracts = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-  const clientSecret = 'SCJ2NINIEHRUNZJ52YIVD4UXGI2SL2K52AHHROYL3PLWONGFTKFDHMFI';
-  const freelancerSecret = 'SDQYUIVKS6XMMDZ5U2YB3PRWPRC436ULTS5L5QEUVIODCRSVZXSAVZ47';
-  const arb1Secret = 'SBTIXJE2NKXLKFKXFZTPVMDUWBGDV5UWT3ULXPG6PJPPIW5O2O6OS6IN';
-  const arb2Secret = 'SBADPF52QAYT6MGFI52CVLNOR4EQV3AVBM4DCSFXGERGS7MIKFQNSKUK';
-  const arb3Secret = 'SD6WNO7KAVNILBPRX6YUGM26J2OFDVRM35GCSAT7D2Q2EFB2I6477YUS';
+  async function getOrCreateKeypair(envVar: string, label: string): Promise<Keypair> {
+    const secret = process.env[envVar];
+    if (secret && secret.startsWith('S')) {
+      return Keypair.fromSecret(secret);
+    }
+    const kp = Keypair.random();
+    try {
+      await fetch(`https://friendbot.stellar.org?addr=${kp.publicKey()}`);
+    } catch {
+      // friendbot best-effort
+    }
+    return kp;
+  }
 
-  const clientKey = Keypair.fromSecret(clientSecret);
-  const freelancerKey = Keypair.fromSecret(freelancerSecret);
-  const arb1Key = Keypair.fromSecret(arb1Secret);
-  const arb2Key = Keypair.fromSecret(arb2Secret);
-  const arb3Key = Keypair.fromSecret(arb3Secret);
+  const clientKey = await getOrCreateKeypair('CLIENT_SECRET', 'client');
+  const freelancerKey = await getOrCreateKeypair('FREELANCER_SECRET', 'freelancer');
+  const arb1Key = await getOrCreateKeypair('ARB1_SECRET', 'arb1');
+  const arb2Key = await getOrCreateKeypair('ARB2_SECRET', 'arb2');
+  const arb3Key = await getOrCreateKeypair('ARB3_SECRET', 'arb3');
 
   console.log(`Contract ID:       ${config.contractId}`);
   console.log(`Native Token Asset: ${config.nativeAssetId}`);
