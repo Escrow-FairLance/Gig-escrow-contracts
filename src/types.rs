@@ -103,6 +103,7 @@ pub struct Dispute {
     pub reason_hash: BytesN<32>,
     pub total_disputed_amount: i128,
     pub arbitrator_fee_amount: i128,
+    pub bond_amount: i128,
     pub settled_freelancer_share_bps: u32,
 }
 
@@ -143,6 +144,8 @@ pub enum SlashingReason {
 pub enum DataKey {
     Admin,
     JobCount,
+    Paused,
+    Treasury,
     Job(u64),
     Milestone(u64, u32),
     Dispute(u64, u32),
