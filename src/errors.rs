@@ -34,4 +34,9 @@ pub enum ContractError {
     ZeroAmount = 28,
     ActiveCasesPending = 29,
     CannotSelfArbitrate = 30,
+    ContractPaused = 31,
+    DisputeBondRequired = 32,
+    InsufficientBond = 33,
+    InvalidTreasuryAddress = 34,
+    UpgradeFailed = 35,
 }
