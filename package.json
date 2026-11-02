@@ -1,16 +1,39 @@
 {
-  "name": "gig-escrow-scripts",
+  "name": "gig-escrow-contracts",
   "version": "0.1.0",
+  "description": "Soroban smart contract protocol, deployment scripts, and TypeScript bindings for Escrow-FairLance",
   "type": "module",
+  "license": "MIT",
+  "author": "Escrow-FairLance Contributors",
+  "homepage": "https://github.com/Escrow-FairLance/Gig-escrow-contracts#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Escrow-FairLance/Gig-escrow-contracts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Escrow-FairLance/Gig-escrow-contracts/issues"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "smart-contracts",
+    "escrow",
+    "freelance",
+    "arbitration",
+    "web3"
+  ],
   "scripts": {
-    "e2e": "node --loader ts-node/esm scripts/e2e_testnet.ts"
+    "build:wasm": "cargo build --target wasm32-unknown-unknown --release",
+    "test:cargo": "cargo test",
+    "bindings:build": "npm --prefix bindings run build",
+    "e2e": "tsx scripts/e2e_testnet.ts"
   },
   "dependencies": {
     "@fairlance/escrow-sdk": "file:./bindings",
-    "@stellar/stellar-sdk": "13.0.0"
+    "@stellar/stellar-sdk": "^13.0.0"
   },
   "devDependencies": {
-    "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
     "typescript": "^5.6.2"
   }
 }
