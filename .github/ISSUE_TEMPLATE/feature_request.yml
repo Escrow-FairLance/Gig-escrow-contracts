@@ -1,0 +1,24 @@
+name: Feature Proposal
+description: Propose a new contract capability, governance mechanic, or SDK improvement
+title: "[Proposal]: "
+labels: ["enhancement", "discussion"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is your feature request related to a problem or protocol limitation?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Detailed description of the feature, method signature, or state architecture proposed.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative implementations or patterns you considered.
