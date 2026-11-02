@@ -37,6 +37,26 @@ pub fn set_admin(env: &Env, admin: &Address) {
     bump_instance(env);
 }
 
+pub fn is_paused(env: &Env) -> bool {
+    bump_instance(env);
+    env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+}
+
+pub fn set_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::Paused, &paused);
+    bump_instance(env);
+}
+
+pub fn get_treasury(env: &Env) -> Option<Address> {
+    bump_instance(env);
+    env.storage().instance().get(&DataKey::Treasury)
+}
+
+pub fn set_treasury(env: &Env, treasury: &Address) {
+    env.storage().instance().set(&DataKey::Treasury, treasury);
+    bump_instance(env);
+}
+
 pub fn get_job_count(env: &Env) -> u64 {
     bump_instance(env);
     env.storage().instance().get(&DataKey::JobCount).unwrap_or(0)
