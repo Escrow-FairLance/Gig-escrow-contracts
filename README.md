@@ -1,14 +1,35 @@
 # Gig-escrow-contracts (Escrow-FairLance)
 
-[![CI](https://github.com/Escrow-FairLance/Gig-escrow-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/Escrow-FairLance/Gig-escrow-contracts/actions/workflows/ci.yml)
-[![Soroban SDK](https://img.shields.io/badge/Soroban%20SDK-22.0.8-blue.svg)](https://stellar.org/soroban)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI Pipeline](https://github.com/Escrow-FairLance/Gig-escrow-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/Escrow-FairLance/Gig-escrow-contracts/actions/workflows/ci.yml)
+[![Soroban SDK](https://img.shields.io/badge/Soroban%20SDK-v22.0.8-blue.svg)](https://stellar.org/soroban)
+[![Rust Edition](https://img.shields.io/badge/Rust-2021%20Edition-black.svg?logo=rust)](https://www.rust-lang.org/)
+[![Target: wasm32](https://img.shields.io/badge/Target-wasm32--unknown--unknown-orange.svg)](https://webassembly.org/)
 
-Decentralized freelancer escrow smart contract system built on Stellar Soroban with milestone-based disbursements, odd-sized panel dispute arbitration (1–7 panelists), economic staking, slashed penalties, and cryptographically anchored deliverable commitments.
+> Enterprise-grade decentralized freelancer escrow smart contract protocol built on Stellar Soroban, featuring milestone disbursements, mathematical median-consensus dispute arbitration (1–7 odd panelists), caller dispute bonds, collateral staking, governance slashing, emergency pause controls, and contract upgradeability.
 
 ---
 
-## 🏛️ System Architecture
+## Table of Contents
+
+- [System Architecture](#system-architecture)
+- [Escrow & Milestone State Machine](#escrow--milestone-state-machine)
+- [Key Security Enhancements & Invariants](#key-security-enhancements--invariants)
+  - [1. Continuous Median-Consensus Dispute Resolution](#1-continuous-median-consensus-dispute-resolution)
+  - [2. Dispute Bonds & Fee-Griefing Protection](#2-dispute-bonds--fee-griefing-protection)
+  - [3. Emergency Circuit Breaker (Pause / Unpause)](#3-emergency-circuit-breaker-pause--unpause)
+  - [4. Contract Bytecode Upgradeability](#4-contract-bytecode-upgradeability)
+  - [5. Protocol Treasury Collateral Routing](#5-protocol-treasury-collateral-routing)
+- [Threat Matrix & Protocol Mitigations](#threat-matrix--protocol-mitigations)
+- [Stellar Testnet Deployment Details](#stellar-testnet-deployment-details)
+- [Contract Methods Reference](#contract-methods-reference)
+- [Developer Quickstart & Verification](#developer-quickstart--verification)
+- [Contributing & Community Standards](#contributing--community-standards)
+- [License](#license)
+
+---
+
+## System Architecture
 
 ```mermaid
 graph TD
@@ -17,19 +38,19 @@ graph TD
     Freelancer -->|submit_milestone: SHA-256 deliverable hash| EscrowContract
     Client -->|approve_milestone: Instant payout| EscrowContract
     Client -->|request_revision: max 2 revisions| EscrowContract
-    Client -->|open_dispute: freezes milestone escrow| EscrowContract
-    Freelancer -->|submit_evidence: SHA-256 evidence hash| EscrowContract
-    Client -->|submit_evidence: SHA-256 evidence hash| EscrowContract
+    DisputeCaller[Client or Freelancer] -->|open_dispute_with_bond: arbitration bond| EscrowContract
+    DisputeCaller -->|submit_evidence: SHA-256 evidence hash| EscrowContract
     Arbitrator1[Arbitrator 1] -->|vote_dispute: bps split proposal| EscrowContract
     Arbitrator2[Arbitrator 2] -->|vote_dispute: bps split proposal| EscrowContract
     Arbitrator3[Arbitrator 3] -->|vote_dispute: bps split proposal| EscrowContract
-    EscrowContract -->|resolve_dispute: majority or 50/50 fallback| EscrowContract
-    EscrowContract -->|Disburse client/freelancer shares + arbitrator fee| StellarLedger[Stellar Asset Ledger]
+    EscrowContract -->|resolve_dispute: sorted median consensus| EscrowContract
+    EscrowContract -->|Slashed collateral| DAOTreasury[Protocol DAO Treasury]
+    EscrowContract -->|Disburse client/freelancer shares + arbitrator fees| StellarLedger[Stellar Asset Ledger]
 ```
 
 ---
 
-## 🔄 Escrow & Milestone State Machine
+## Escrow & Milestone State Machine
 
 ```mermaid
 stateDiagram-v2
@@ -45,15 +66,14 @@ stateDiagram-v2
         MilestoneSubmitted --> RevisionRequested: Client requests revision (<= 2)
         RevisionRequested --> MilestoneSubmitted: Freelancer re-submits
         MilestoneSubmitted --> MilestoneApproved: Auto-released (review window expired)
-        MilestoneSubmitted --> Disputed: Client opens dispute within review window
+        MilestoneSubmitted --> Disputed: Caller opens dispute (optional bond deposited)
         MilestonePending --> StalledReclaimed: Deadline missed past work timeout
     }
 
     state Disputed {
-        [*] --> EvidencePhase
-        EvidencePhase --> VotingPhase: Arbitrators review evidence
-        VotingPhase --> Resolved: Majority vote settlement
-        VotingPhase --> Resolved: Voting deadline passes (vote count or 50/50 fallback)
+        [*] --> EvidencePhase: Parties submit cryptographic evidence hashes
+        EvidencePhase --> VotingPhase: Panelists review evidence & cast BPS votes
+        VotingPhase --> Resolved: Exact majority or sorted median consensus settlement
     }
 
     Active --> Completed: All milestones approved / resolved
@@ -63,24 +83,47 @@ stateDiagram-v2
 
 ---
 
-## 🛡️ Threat Model & Security Mitigations
+## Key Security Enhancements & Invariants
 
-| Threat Vector | Attack Scenario | Contract Mitigation |
-| :--- | :--- | :--- |
-| **Colluding Arbitrators** | Malicious arbitrators collude with a party to award unfair payout. | Arbitrators must stake tokens (`stake_arbitrator`) before panel selection. Panels must be odd-sized (1–7) with unique addresses. Admin/DAO can slash stake (`slash_arbitrator`) for provable collusion. |
-| **Fake Deliverables** | Freelancer submits empty or corrupted files to trigger payout. | Deliverables are cryptographically anchored as SHA-256 hashes (`submit_milestone`). Client reviews during review window; disputed files are submitted as evidence for panel audit. |
-| **Client Silent Griefing** | Client disappears without reviewing valid submitted work. | Guaranteed time-decay auto-release (`auto_release`) triggers immediate payout after `review_window_seconds` expires. |
-| **Freelancer Ghosting** | Freelancer accepts job but never delivers work. | Client can reclaim remaining escrow (`reclaim_stalled`) once `milestone.deadline + work_timeout_seconds` passes. |
-| **Revision Extortion** | Client endlessly demands revisions to avoid payment. | Hard contract cap of maximum 2 revisions per milestone (`MaxRevisionsExceeded`). On 3rd dissatisfaction, client must either approve or open an official dispute. |
-| **Bribed / Non-Voting Arbitrators** | Arbitrators accept assignment but abandon dispute voting. | Non-voting arbitrators forfeit all fees (`arbitrator_fee_bps` split only among voters) and are slashed for non-voting negligence. |
-| **Evidence Leakage** | Confidential deliverables exposed publicly on-chain. | Only 32-byte cryptographic SHA-256 hashes are stored on-chain. Deliverable files and evidence bundles remain off-chain, encrypted at rest. |
-| **Escrow Accounting Deficits** | Re-entrancy, rounding errors, or mismatched balance math. | Strict invariant enforced: `job.escrow_balance == sum(unresolved milestones)`. All state changes precede token transfers. Integer division residues are refunded to the client. |
+### 1. Continuous Median-Consensus Dispute Resolution
+Unlike naive mode-matching algorithms that fail and force 50/50 splits when panelists cast non-identical basis point votes (e.g. 70%, 80%, 90%), the contract executes an in-place sorted **median consensus**:
+- Exact majority ($\ge (N/2) + 1$ identical votes) settles immediately.
+- If deadline passes or all panelists vote with varied percentages, the contract sorts all cast basis points ascending and determines the median:
+  $$\text{Settled BPS} = \begin{cases} \text{votes}[N/2] & \text{if } N \text{ is odd} \\ \frac{\text{votes}[N/2 - 1] + \text{votes}[N/2]}{2} & \text{if } N \text{ is even} \end{cases}$$
+- Outlier and biased votes are neutralised mathematically without defaulting to false ties.
+
+### 2. Dispute Bonds & Fee-Griefing Protection
+- In standard escrow contracts, arbitrator fees are deducted from the milestone principal, creating an attack vector where a disgruntled client can open a frivolous dispute and force the freelancer to lose up to 30% in arbitrator fees even if the freelancer wins 100%.
+- Through `open_dispute_with_bond`, the dispute initiator deposits an arbitration fee bond. When the dispute is resolved in favor of the defendant ($\ge 5000$ BPS for freelancer), the bond pays the panel fees and the defendant receives their full unpenalized milestone earnings.
+
+### 3. Emergency Circuit Breaker (Pause / Unpause)
+- Admin can trigger `set_paused(admin, true)` to halt `create_job` and `stake_arbitrator` operations during zero-day investigations or upstream asset incidents while preserving existing milestone release and mutual close operations.
+
+### 4. Contract Bytecode Upgradeability
+- Implements the official Soroban contract upgrade pattern via `env.deployer().update_current_contract_wasm(new_wasm_hash)`.
+- Allows authorized protocol governance to deploy audited patches to contract logic without migrating ledger balances or disrupting active escrows.
+
+### 5. Protocol Treasury Collateral Routing
+- Slashed collateral from non-voting or malicious arbitrators is routed to a configured DAO treasury address (`set_treasury`) rather than personal admin accounts, eliminating centralization risks.
 
 ---
 
-## 📦 Testnet Deployment Details
+## Threat Matrix & Protocol Mitigations
 
-The contract is compiled for `wasm32v1-none` and verified on Stellar Testnet:
+| Threat Vector | Attack Scenario | Contract Mitigation |
+| :--- | :--- | :--- |
+| **Arbitrator Collusion** | Panelists coordinate unfair payout. | Arbitrators must stake tokens (`stake_arbitrator`). Panels are strictly odd-sized (1–7) with non-party exclusion. Slashed collateral is routed to DAO treasury. |
+| **Deliverable Tampering** | Contractor submits corrupted files. | Deliverables are cryptographically anchored as SHA-256 hashes (`submit_milestone`) matching off-chain storage bundles. |
+| **Fee Griefing Extortion** | Client opens dispute to haircut earnings. | Initiator deposits arbitration bond (`open_dispute_with_bond`). Prevailing party receives full unpenalized principal. |
+| **Client Ghosting** | Client disappears without reviewing work. | Guaranteed time-decay auto-release (`auto_release`) triggers payout after `review_window_seconds`. |
+| **Freelancer Ghosting** | Contractor accepts job but never delivers. | Client reclaims remaining escrow (`reclaim_stalled`) once `milestone.deadline + work_timeout_seconds` elapses. |
+| **Endless Revision Demands** | Client demands infinite rework. | Hard cap of maximum 2 revisions per milestone (`MaxRevisionsExceeded`). On 3rd dissatisfaction, dispute must be opened. |
+| **Non-Voting Panelists** | Arbitrators abandon dispute voting. | Non-voting arbitrators forfeit fees and suffer automatic 10% collateral slashing (`emit_arbitrator_slashed`). |
+| **Zero-Day Vulnerability** | Exploited token contract or runtime bug. | Admin can trigger emergency pause (`set_paused`) and deploy audited bytecode upgrade (`upgrade`). |
+
+---
+
+## Stellar Testnet Deployment Details
 
 - **Network Passphrase**: `Test SDF Network ; September 2015`
 - **Soroban RPC URL**: `https://soroban-testnet.stellar.org`
@@ -90,54 +133,11 @@ The contract is compiled for `wasm32v1-none` and verified on Stellar Testnet:
 
 ---
 
-## 🚀 Building & Testing
-
-### Prerequisites
-- Rust `1.80+` with target `wasm32v1-none` (or `wasm32-unknown-unknown`)
-- `stellar-cli` `22.0+`
-- Node.js `20+`
-
-### 1. Run Smart Contract Test Suite
-```bash
-cargo test
-```
-*Executes all 14 unit, property, and invariant tests verifying state transitions, revision limits, dual auth, and panel resolution.*
-
-### 2. Build WebAssembly Contract
-```bash
-stellar contract build
-# Or directly with cargo:
-cargo rustc --manifest-path=Cargo.toml --crate-type=cdylib --target=wasm32v1-none --release
-```
-
-### 3. Deploy to Testnet
-```bash
-stellar keys generate deployer --network testnet --fund
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/Gig-escrow-contracts.wasm \
-  --source deployer --network testnet --alias fairlance
-```
-
-### 4. Build TypeScript SDK Bindings
-```bash
-cd bindings
-npm install
-npm run build
-```
-
-### 5. Run End-to-End Testnet Lifecycle
-```bash
-npm install
-npx ts-node --esm scripts/e2e_testnet.ts
-```
-
----
-
-## 📜 Contract Methods Reference
+## Contract Methods Reference
 
 ### Core Lifecycle
 - `initialize(admin: Address)`: Set protocol administrator.
-- `create_job(client, freelancer, token, milestones, terms, arbitrator_panel)`: Deposit milestone total into escrow.
+- `create_job(client, freelancer, token, milestones, terms, arbitrator_panel)`: Deposit milestone total into escrow (pause-guarded).
 - `accept_job(job_id)`: Freelancer commits to terms and milestones.
 - `decline_job(job_id)`: Freelancer declines; 100% refund to client.
 - `cancel_unaccepted(job_id)`: Client cancels before acceptance (applies cancellation fee if set).
@@ -150,15 +150,74 @@ npx ts-node --esm scripts/e2e_testnet.ts
 - `mutual_close(job_id, client_amount, freelancer_amount)`: Dual-authenticated payout settlement.
 
 ### Arbitration & Staking
-- `stake_arbitrator(arbitrator, token, amount)`: Collateral deposit to qualify for panels.
+- `stake_arbitrator(arbitrator, token, amount)`: Collateral deposit to qualify for panels (pause-guarded).
 - `unstake_arbitrator(arbitrator, token, amount)`: Unstake tokens if no active panels remain.
-- `slash_arbitrator(admin, arbitrator, token, amount, reason)`: Governance slash for rogue behavior.
+- `slash_arbitrator(admin, arbitrator, token, amount, reason)`: Governance slash routed to protocol treasury.
 - `open_dispute(job_id, milestone_index, caller, reason_hash)`: Freezes milestone in dispute.
+- `open_dispute_with_bond(job_id, milestone_index, caller, reason_hash, bond_amount)`: Opens dispute with fee bond protection.
 - `submit_evidence(job_id, milestone_index, submitter, evidence_hash)`: Anchor audit proof.
 - `vote_dispute(job_id, milestone_index, arbitrator, freelancer_share_bps)`: Panel vote in bps (0..10000).
-- `resolve_dispute(job_id, milestone_index)`: Executes majority consensus or voting deadline fallback.
+- `resolve_dispute(job_id, milestone_index)`: Executes exact majority or sorted median consensus settlement.
+
+### Governance & Protocol Controls
+- `upgrade(admin, new_wasm_hash)`: Deploys audited bytecode upgrade via Soroban deployer.
+- `set_paused(admin, paused)`: Activates or deactivates emergency circuit breaker.
+- `is_paused()`: Returns current pause state.
+- `set_treasury(admin, treasury)`: Sets DAO treasury address for slashed penalties.
+- `get_treasury()`: Returns configured treasury address.
 
 ---
 
-## 📄 License
-MIT © Escrow-FairLance Team
+## Developer Quickstart & Verification
+
+### Prerequisites
+- Rust $\ge 1.80$ with target `wasm32-unknown-unknown`
+- Stellar CLI $\ge 22.0$
+- Node.js $\ge 20$
+
+### 1. Build WebAssembly Contract
+```bash
+cargo build --target wasm32-unknown-unknown --release
+```
+Compiled WASM output is generated at:
+```
+target/wasm32-unknown-unknown/release/gig_escrow_contracts.wasm
+```
+
+### 2. Verify Code Quality & Lints
+```bash
+# Check code formatting
+cargo fmt -- --check
+
+# Run Clippy lints
+cargo clippy --all-targets -- -D warnings
+
+# Verify all unit tests compile
+cargo check --tests
+```
+
+### 3. Build TypeScript SDK Bindings
+```bash
+npm run bindings:build
+```
+
+### 4. Run End-to-End Testnet Lifecycle
+```bash
+cp .env.example .env
+npm run e2e
+```
+
+---
+
+## Contributing & Community Standards
+
+Contributions from Web3 developers are welcome! Please review:
+- [Contributing Guidelines](CONTRIBUTING.md): Code style, commit conventions, and PR checklist.
+- [Code of Conduct](CODE_OF_CONDUCT.md): Contributor Covenant v2.1 standards.
+- [Security Policy](SECURITY.md): Vulnerability disclosure procedures and bug bounty criteria.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
