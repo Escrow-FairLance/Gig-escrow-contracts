@@ -23,7 +23,7 @@ $deployerAddr = stellar keys address deployer
 
 $config = @{
     network = "testnet"
-    contractId = if ($contractId) { $contractId.Trim() } else { "CDG3CB5IEATXZPTL3SQGCBVJM2A4HUX4J5TTFGMA7NPGFQBMQBYFXZCB" }
+    contractId = if ($contractId) { $contractId.Trim() } else { "CCFJLJRJWMA6EG3N3X3EK7UN3OPKN3YKOAR4T53KSXOSRDJWT473HMAY" }
     contractAlias = "fairlance"
     nativeTokenContractId = $tokenId.Trim()
     deployerAddress = $deployerAddr.Trim()
