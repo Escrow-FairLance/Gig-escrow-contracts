@@ -697,3 +697,166 @@ fn test_property_escrow_accounting_balance_invariant() {
     assert_eq!(job3.escrow_balance, 0);
     assert_eq!(job3.status, JobStatus::Completed);
 }
+
+#[test]
+fn test_continuous_median_arbitration_consensus() {
+    let f = setup_fixture();
+    f.contract_client.stake_arbitrator(&f.arb1, &f.token_client.address, &5_000_000);
+    f.contract_client.stake_arbitrator(&f.arb2, &f.token_client.address, &5_000_000);
+    f.contract_client.stake_arbitrator(&f.arb3, &f.token_client.address, &5_000_000);
+
+    let mut milestones = Vec::new(&f.env);
+    milestones.push_back(MilestoneInit {
+        title_hash: BytesN::from_array(&f.env, &[44u8; 32]),
+        amount: 100_000_000,
+        deadline: f.env.ledger().timestamp() + 500_000,
+    });
+
+    let mut panel = Vec::new(&f.env);
+    panel.push_back(f.arb1.clone());
+    panel.push_back(f.arb2.clone());
+    panel.push_back(f.arb3.clone());
+
+    let job_id = f.contract_client.create_job(
+        &f.client_user,
+        &f.freelancer,
+        &f.token_client.address,
+        &milestones,
+        &sample_terms(&f.env),
+        &panel,
+    );
+    f.contract_client.accept_job(&job_id);
+    f.contract_client.submit_milestone(&job_id, &0, &BytesN::from_array(&f.env, &[45u8; 32]));
+    f.contract_client.open_dispute(&job_id, &0, &f.client_user, &BytesN::from_array(&f.env, &[46u8; 32]));
+
+    // All 3 arbitrators vote non-identical percentages favoring freelancer (70%, 80%, 90%)
+    f.contract_client.vote_dispute(&job_id, &0, &f.arb1, &7000);
+    f.contract_client.vote_dispute(&job_id, &0, &f.arb2, &8000);
+    f.contract_client.vote_dispute(&job_id, &0, &f.arb3, &9000);
+
+    f.contract_client.resolve_dispute(&job_id, &0);
+
+    // Median of [7000, 8000, 9000] is 8000 (NOT arbitrary 50/50 tie break)
+    let dispute = f.contract_client.get_dispute(&job_id, &0);
+    assert_eq!(dispute.status, DisputeStatus::Resolved);
+    assert_eq!(dispute.settled_freelancer_share_bps, 8000);
+}
+
+#[test]
+fn test_dispute_with_caller_bond_protects_freelancer() {
+    let f = setup_fixture();
+    f.contract_client.stake_arbitrator(&f.arb1, &f.token_client.address, &5_000_000);
+
+    let mut milestones = Vec::new(&f.env);
+    milestones.push_back(MilestoneInit {
+        title_hash: BytesN::from_array(&f.env, &[51u8; 32]),
+        amount: 100_000_000,
+        deadline: f.env.ledger().timestamp() + 500_000,
+    });
+
+    let mut panel = Vec::new(&f.env);
+    panel.push_back(f.arb1.clone());
+
+    let job_id = f.contract_client.create_job(
+        &f.client_user,
+        &f.freelancer,
+        &f.token_client.address,
+        &milestones,
+        &sample_terms(&f.env), // 5% arbitrator fee = 5_000_000
+        &panel,
+    );
+    f.contract_client.accept_job(&job_id);
+    f.contract_client.submit_milestone(&job_id, &0, &BytesN::from_array(&f.env, &[52u8; 32]));
+
+    // Client opens dispute with 5_000_000 bond
+    let bond_amount = 5_000_000;
+    f.contract_client.open_dispute_with_bond(
+        &job_id,
+        &0,
+        &f.client_user,
+        &BytesN::from_array(&f.env, &[53u8; 32]),
+        &bond_amount,
+    );
+
+    let dispute = f.contract_client.get_dispute(&job_id, &0);
+    assert_eq!(dispute.bond_amount, bond_amount);
+
+    // Arbitrator votes 100% (10000 bps) to freelancer
+    f.contract_client.vote_dispute(&job_id, &0, &f.arb1, &10000);
+
+    let freelancer_bal_before = f.token_client.balance(&f.freelancer);
+    f.contract_client.resolve_dispute(&job_id, &0);
+
+    // Freelancer receives full 100_000_000 without suffering arbitrator fee haircut
+    let freelancer_gain = f.token_client.balance(&f.freelancer) - freelancer_bal_before;
+    assert_eq!(freelancer_gain, 100_000_000);
+}
+
+#[test]
+fn test_emergency_pause_circuit_breaker() {
+    let f = setup_fixture();
+
+    assert_eq!(f.contract_client.is_paused(), false);
+
+    // Admin pauses contract
+    f.contract_client.set_paused(&f.admin, &true);
+    assert_eq!(f.contract_client.is_paused(), true);
+
+    let mut milestones = Vec::new(&f.env);
+    milestones.push_back(MilestoneInit {
+        title_hash: BytesN::from_array(&f.env, &[61u8; 32]),
+        amount: 10_000_000,
+        deadline: f.env.ledger().timestamp() + 500_000,
+    });
+    let mut panel = Vec::new(&f.env);
+    panel.push_back(f.arb1.clone());
+
+    // Creating job while paused fails with ContractPaused
+    let res = f.contract_client.try_create_job(
+        &f.client_user,
+        &f.freelancer,
+        &f.token_client.address,
+        &milestones,
+        &sample_terms(&f.env),
+        &panel,
+    );
+    assert_eq!(res, Err(Ok(ContractError::ContractPaused)));
+
+    // Admin unpauses
+    f.contract_client.set_paused(&f.admin, &false);
+    assert_eq!(f.contract_client.is_paused(), false);
+}
+
+#[test]
+fn test_treasury_configuration_and_slashing() {
+    let f = setup_fixture();
+    f.contract_client.stake_arbitrator(&f.arb1, &f.token_client.address, &5_000_000);
+
+    let dao_treasury = Address::generate(&f.env);
+    f.contract_client.set_treasury(&f.admin, &dao_treasury);
+    assert_eq!(f.contract_client.get_treasury(), Some(dao_treasury.clone()));
+
+    let treasury_bal_before = f.token_client.balance(&dao_treasury);
+    f.contract_client.slash_arbitrator(
+        &f.admin,
+        &f.arb1,
+        &f.token_client.address,
+        &1_000_000,
+        &(SlashingReason::NonVoting as u32),
+    );
+
+    // Slashed tokens routed to DAO treasury wallet
+    let treasury_bal_after = f.token_client.balance(&dao_treasury);
+    assert_eq!(treasury_bal_after - treasury_bal_before, 1_000_000);
+}
+
+#[test]
+fn test_contract_upgrade_auth_check() {
+    let f = setup_fixture();
+    let rogue = Address::generate(&f.env);
+    let new_wasm = BytesN::from_array(&f.env, &[99u8; 32]);
+
+    // Rogue user calling upgrade fails with Unauthorized
+    let res = f.contract_client.try_upgrade(&rogue, &new_wasm);
+    assert_eq!(res, Err(Ok(ContractError::Unauthorized)));
+}
