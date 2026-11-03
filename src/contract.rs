@@ -27,6 +27,9 @@ impl EscrowFairLance {
         token: Address,
         amount: i128,
     ) -> Result<(), ContractError> {
+        if is_paused(&env) {
+            return Err(ContractError::ContractPaused);
+        }
         arbitrator.require_auth();
         if amount <= 0 {
             return Err(ContractError::ZeroAmount);
@@ -89,6 +92,9 @@ impl EscrowFairLance {
         terms: JobTerms,
         arbitrator_panel: Vec<Address>,
     ) -> Result<u64, ContractError> {
+        if is_paused(&env) {
+            return Err(ContractError::ContractPaused);
+        }
         client.require_auth();
 
         if client == freelancer {
@@ -985,6 +991,22 @@ impl EscrowFairLance {
         env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
         emit_contract_upgraded(&env, &admin, new_wasm_hash);
         Ok(())
+    }
+
+    /// Pause or unpause contract operations in emergencies
+    pub fn set_paused(env: Env, admin: Address, paused: bool) -> Result<(), ContractError> {
+        admin.require_auth();
+        let current_admin = get_admin(&env)?;
+        if admin != current_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        set_paused(&env, paused);
+        emit_protocol_paused(&env, &admin, paused);
+        Ok(())
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        is_paused(&env)
     }
 
     // --- GETTERS ---
