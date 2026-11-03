@@ -235,3 +235,16 @@ pub fn emit_protocol_paused(env: &Env, admin: &Address, paused: bool) {
         paused,
     );
 }
+
+pub fn emit_dispute_bond_settled(
+    env: &Env,
+    job_id: u64,
+    milestone_index: u32,
+    bond_amount: i128,
+    refunded_to: &Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "bond_settled"), job_id, milestone_index),
+        (bond_amount, refunded_to.clone()),
+    );
+}
