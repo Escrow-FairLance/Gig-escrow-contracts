@@ -556,6 +556,18 @@ impl EscrowFairLance {
         caller: Address,
         reason_hash: BytesN<32>,
     ) -> Result<(), ContractError> {
+        Self::open_dispute_with_bond(env, job_id, milestone_index, caller, reason_hash, 0)
+    }
+
+    /// Open dispute with an explicit caller arbitration bond to protect prevailing party
+    pub fn open_dispute_with_bond(
+        env: Env,
+        job_id: u64,
+        milestone_index: u32,
+        caller: Address,
+        reason_hash: BytesN<32>,
+        bond_amount: i128,
+    ) -> Result<(), ContractError> {
         caller.require_auth();
 
         let mut job = get_job(&env, job_id)?;
@@ -583,6 +595,14 @@ impl EscrowFairLance {
         }
 
         let fee_amount = (milestone.amount * (job.terms.arbitrator_fee_bps as i128)) / 10000;
+        if bond_amount > 0 {
+            if bond_amount < fee_amount {
+                return Err(ContractError::InsufficientBond);
+            }
+            let token_client = token::Client::new(&env, &job.token);
+            token_client.transfer(&caller, &env.current_contract_address(), &bond_amount);
+        }
+
         let dispute = Dispute {
             job_id,
             milestone_index,
@@ -593,7 +613,7 @@ impl EscrowFairLance {
             reason_hash: reason_hash.clone(),
             total_disputed_amount: milestone.amount,
             arbitrator_fee_amount: fee_amount,
-            bond_amount: 0,
+            bond_amount,
             settled_freelancer_share_bps: 0,
         };
 
@@ -842,9 +862,17 @@ impl EscrowFairLance {
         }
 
         // Remaining amount for client and freelancer
-        let principal_remaining = total_disputed - actual_arb_fee;
-        let freelancer_payout = (principal_remaining * (settled_freelancer_share_bps as i128)) / 10000;
-        let client_payout = principal_remaining - freelancer_payout;
+        let (freelancer_payout, client_payout) = if dispute.bond_amount > 0 && settled_freelancer_share_bps >= 5000 {
+            // Caller's bond covers arbitrator fee; prevailing freelancer receives full unpenalized share
+            let f_payout = (total_disputed * (settled_freelancer_share_bps as i128)) / 10000;
+            let c_payout = total_disputed - f_payout;
+            (f_payout, c_payout)
+        } else {
+            let principal_remaining = total_disputed - actual_arb_fee;
+            let f_payout = (principal_remaining * (settled_freelancer_share_bps as i128)) / 10000;
+            let c_payout = principal_remaining - f_payout;
+            (f_payout, c_payout)
+        };
 
         // Checks-Effects-Interactions: update state before transfers
         dispute.status = DisputeStatus::Resolved;
