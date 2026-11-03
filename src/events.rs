@@ -221,3 +221,17 @@ pub fn emit_arbitrator_slashed(
         (token.clone(), amount, reason),
     );
 }
+
+pub fn emit_contract_upgraded(env: &Env, admin: &Address, new_wasm_hash: BytesN<32>) {
+    env.events().publish(
+        (Symbol::new(env, "upgrade"), admin.clone()),
+        new_wasm_hash,
+    );
+}
+
+pub fn emit_protocol_paused(env: &Env, admin: &Address, paused: bool) {
+    env.events().publish(
+        (Symbol::new(env, "paused"), admin.clone()),
+        paused,
+    );
+}

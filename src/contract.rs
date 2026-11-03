@@ -971,6 +971,22 @@ impl EscrowFairLance {
         get_treasury(&env)
     }
 
+    /// Upgrade contract WASM bytecode with admin authorization
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        let current_admin = get_admin(&env)?;
+        if admin != current_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+        emit_contract_upgraded(&env, &admin, new_wasm_hash);
+        Ok(())
+    }
+
     // --- GETTERS ---
 
     pub fn get_job(env: Env, job_id: u64) -> Result<Job, ContractError> {
