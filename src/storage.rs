@@ -256,3 +256,16 @@ pub fn set_arbitrator_stats(
     env.storage().persistent().set(&key, stats);
     bump_persistent(env, &key);
 }
+
+pub fn cleanup_dispute_records(
+    env: &Env,
+    job_id: u64,
+    milestone_index: u32,
+    voters: &Vec<Address>,
+) {
+    for i in 0..voters.len() {
+        let arb = voters.get(i).unwrap();
+        let vote_key = DataKey::Vote(job_id, milestone_index, arb);
+        env.storage().persistent().remove(&vote_key);
+    }
+}
