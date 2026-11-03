@@ -947,12 +947,28 @@ impl EscrowFairLance {
         stats.total_cases_slashed = stats.total_cases_slashed.saturating_add(1);
         set_arbitrator_stats(&env, &arbitrator, &stats);
 
-        // Send slashed funds to admin / treasury
+        // Send slashed funds to protocol treasury (or fallback to admin if not configured)
+        let destination = get_treasury(&env).unwrap_or(admin.clone());
         let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&env.current_contract_address(), &admin, &amount);
+        token_client.transfer(&env.current_contract_address(), &destination, &amount);
 
         emit_arbitrator_slashed(&env, &arbitrator, &token, amount, reason);
         Ok(())
+    }
+
+    /// Configure protocol treasury / DAO address to receive slashed arbitrator penalties
+    pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), ContractError> {
+        admin.require_auth();
+        let current_admin = get_admin(&env)?;
+        if admin != current_admin {
+            return Err(ContractError::Unauthorized);
+        }
+        set_treasury(&env, &treasury);
+        Ok(())
+    }
+
+    pub fn get_treasury(env: Env) -> Option<Address> {
+        get_treasury(&env)
     }
 
     // --- GETTERS ---
