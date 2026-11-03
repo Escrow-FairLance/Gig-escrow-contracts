@@ -593,6 +593,7 @@ impl EscrowFairLance {
             reason_hash: reason_hash.clone(),
             total_disputed_amount: milestone.amount,
             arbitrator_fee_amount: fee_amount,
+            bond_amount: 0,
             settled_freelancer_share_bps: 0,
         };
 
@@ -745,41 +746,38 @@ impl EscrowFairLance {
             return Err(ContractError::DisputeNotResolvableYet);
         }
 
-        // Determine final outcome
+        // Determine final outcome via exact majority or median consensus
         let settled_freelancer_share_bps: u32 = if let Some(majority_bps) = early_majority_outcome {
             majority_bps
         } else if voters.len() == 0 {
             5000 // 50/50 split on zero votes
         } else {
-            // If deadline passed: choose most voted, or average if no single winner, or 5000 on tie
-            let mut best_count = 0;
-            let mut best_bps = 5000;
-            let mut is_tie = false;
-
+            // Sort votes ascending to determine robust median consensus
+            let mut sorted_votes = Vec::new(&env);
             for i in 0..voters.len() {
-                let arb_i = voters.get(i).unwrap();
-                let vote_i = get_vote(&env, job_id, milestone_index, &arb_i).unwrap();
-                let mut count = 0;
-                for j in 0..voters.len() {
-                    let arb_j = voters.get(j).unwrap();
-                    let vote_j = get_vote(&env, job_id, milestone_index, &arb_j).unwrap();
-                    if vote_i.freelancer_share_bps == vote_j.freelancer_share_bps {
-                        count += 1;
-                    }
-                }
-                if count > best_count {
-                    best_count = count;
-                    best_bps = vote_i.freelancer_share_bps;
-                    is_tie = false;
-                } else if count == best_count && best_bps != vote_i.freelancer_share_bps {
-                    is_tie = true;
+                let arb = voters.get(i).unwrap();
+                let v = get_vote(&env, job_id, milestone_index, &arb).unwrap();
+                sorted_votes.push_back(v.freelancer_share_bps);
+            }
+
+            let len = sorted_votes.len();
+            for i in 1..len {
+                let mut j = i;
+                while j > 0 && sorted_votes.get(j - 1).unwrap() > sorted_votes.get(j).unwrap() {
+                    let val_left = sorted_votes.get(j - 1).unwrap();
+                    let val_right = sorted_votes.get(j).unwrap();
+                    sorted_votes.set(j - 1, val_right);
+                    sorted_votes.set(j, val_left);
+                    j -= 1;
                 }
             }
 
-            if is_tie {
-                5000
+            if len % 2 == 1 {
+                sorted_votes.get(len / 2).unwrap()
             } else {
-                best_bps
+                let mid1 = sorted_votes.get(len / 2 - 1).unwrap();
+                let mid2 = sorted_votes.get(len / 2).unwrap();
+                (mid1 + mid2) / 2
             }
         };
 
